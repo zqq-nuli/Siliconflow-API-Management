@@ -5924,6 +5924,7 @@ const adminHtmlContent = `
             if (isBatchProcessingStopped) {
               hideProgress();
               showToast(\`批量删除已停止！已完成: \${processed}/\${total}\`);
+              loadAllKeys();
               return;
             }
             
