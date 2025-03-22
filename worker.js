@@ -1844,6 +1844,47 @@ const CONFIG = {
         }
       }
   
+      /* 添加GitHub链接样式 */
+      .github-link {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        text-decoration: none;
+        color: #333;
+        background: #f1f1f1;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 6px 10px;
+        font-size: 0.9rem;
+        margin-right: 10px;
+        transition: all 0.2s;
+        position: absolute;
+        right: 15px;
+        top: 15px;
+      }
+      
+      .github-link:hover {
+        background: #333;
+        color: white;
+        border-color: #333;
+      }
+      
+      .github-link svg {
+        transition: transform 0.2s;
+      }
+      
+      .github-link:hover svg {
+        transform: rotate(360deg);
+      }
+      
+      @media (max-width: 768px) {
+        .github-link {
+          position: static;
+          margin: 10px auto;
+          width: fit-content;
+        }
+      }
+  
     </style>
   </head>
     <body>
@@ -1852,6 +1893,12 @@ const CONFIG = {
           <img src="https://imgbed.killerbest.com/file/1742260658545_siliconcloud-color.png" alt="logo" class="logo"/>
           <h1>硅基流动API Key Sharing</h1>
           <div class="subtitle">API密钥共享与负载均衡服务</div>
+          <a href="https://github.com/Dr-Ai-0018/Siliconflow-API-Management" target="_blank" class="github-link">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path>
+            </svg>
+            GitHub
+          </a>
         </div>
         
         <div id="keys-container" class="keys-container">
@@ -1942,7 +1989,7 @@ const CONFIG = {
                 <span>示例请求</span>
                 <button class="copy-btn" data-copy=
   "
-  curl -X POST '<you-project-domain>/v1/chat/completions' \\
+  curl -X POST '<your-project-domain>/v1/chat/completions' \\
   -H 'Content-Type: application/json' \\
   -H 'Authorization: Bearer your-api-key-here' \\
   -d '{'model': 'Qwen/Qwen2.5-7B-Instruct', 'messages': [{'role': 'user', 'content': '你好'}], 'stream': true}'
@@ -1951,7 +1998,7 @@ const CONFIG = {
               
               <div class="api-code">
       <span class="comment"># 向负载均衡服务发送请求</span>
-      curl -X POST '<you-project-domain>/v1/chat/completions' \\
+      curl -X POST '<your-project-domain>/v1/chat/completions' \\
         -H 'Content-Type: application/json' \\
         -H 'Authorization: Bearer <span class="keyword">your-api-key-here</span>' \\
         -d '{
@@ -1972,14 +2019,14 @@ const CONFIG = {
     https://api.siliconflow.cn/v1/...
   
     # 替换为
-    <you-project-domain>/v1/...">复制</button>
+    <your-project-domain>/v1/...">复制</button>
               </div>
               <div class="api-code">
       <span class="comment"># 原始API地址</span>
       https://api.siliconflow.cn/v1/...
   
       <span class="comment"># 替换为</span>
-      <you-project-domain>/v1/...
+      <your-project-domain>/v1/...
               </div>
             </div>
             
@@ -4080,8 +4127,8 @@ const CONFIG = {
         
         .chart-container,
         .chart-full-container {
-          height: auto;
-          min-height: 300px;
+          height: 300px;
+          width: 100%;
         }
       }
       
@@ -4185,6 +4232,49 @@ const CONFIG = {
         border-color: #4299e1;
       }
   
+      /* Github 链接样式 */
+      .github-link {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        text-decoration: none;
+        color: #333;
+        background: #f1f1f1;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 6px 10px;
+        font-size: 0.9rem;
+        margin-right: 10px;
+        transition: all 0.2s;
+      }
+      
+      .github-link:hover {
+        background: #333;
+        color: white;
+        border-color: #333;
+      }
+      
+      .github-link svg {
+        transition: transform 0.2s;
+      }
+      
+      .github-link:hover svg {
+        transform: rotate(360deg);
+      }
+  
+      .action-buttons {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+  
+      @media (max-width: 768px) {
+        .action-buttons {
+          margin-top: 10px;
+          justify-content: center;
+        }
+      }
+  
     </style>
     <!-- 添加Chart.js库 -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
@@ -4196,6 +4286,12 @@ const CONFIG = {
         <img src="https://imgbed.killerbest.com/file/1742260658545_siliconcloud-color.png" alt="logo" class="logo"/>
         <h1>硅基流动Token管理 - 管理员</h1>
         <div class="action-buttons">
+          <a href="https://github.com/Dr-Ai-0018/Siliconflow-API-Management" target="_blank" class="github-link">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path>
+            </svg>
+            GitHub
+          </a>
           <a href="/" class="home-link">返回主页</a>
         </div>
       </div>
