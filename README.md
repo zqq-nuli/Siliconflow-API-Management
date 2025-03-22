@@ -111,7 +111,7 @@ curl -X POST 'https://你的域名/v1/chat/completions' \
 
 ## 🚀 部署教程
 
-### 在Cloudflare Workers - KV版本部署
+### Cloudflare Workers - KV版本部署
 
 1. **准备工作** 📋
    - 注册并登录Cloudflare账号
