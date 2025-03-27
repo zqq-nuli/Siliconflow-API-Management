@@ -1,1166 +1,1167 @@
 // Configuration (可以通过管理员界面覆盖)
 const CONFIG = {
-    ADMIN_USERNAME: "default-admin-username", // 默认管理员用户名
-    ADMIN_PASSWORD: "default-admin-password", // 默认管理员密码
-    API_KEY: "default-api-key", // 用于代理认证的默认API密钥
-    PAGE_SIZE: 12, // 主界面每页显示的密钥数量
-    ACCESS_CONTROL: "open", // 访问控制模式: "open", "restricted", "private"
-    GUEST_PASSWORD: "guest_password", // 访客密码，用于restricted模式
+  ADMIN_USERNAME: "default-admin-username", // 默认管理员用户名
+  ADMIN_PASSWORD: "default-admin-password", // 默认管理员密码
+  API_KEY: "default-api-key", // 用于代理认证的默认API密钥
+  PAGE_SIZE: 12, // 主界面每页显示的密钥数量
+  ACCESS_CONTROL: "open", // 访问控制模式: "open", "restricted", "private"
+  GUEST_PASSWORD: "guest_password", // 访客密码，用于restricted模式
 };
 
 const BASE_URL = "https://generativelanguage.googleapis.com";
 
 // 设置环境变量以供全局使用
 export default {
-    async fetch(request, env) {
-        // 将env保存为全局变量，便于其他函数访问D1
-        globalThis.env = env;
-        return handleRequest(request);
-    },
+  async fetch(request, env) {
+      // 将env保存为全局变量，便于其他函数访问D1
+      globalThis.env = env;
+      return handleRequest(request);
+  },
 };
 
 async function handleRequest(request) {
-    const url = new URL(request.url);
-    const path = url.pathname;
+  const url = new URL(request.url);
+  const path = url.pathname;
 
-    // 处理预检请求
-    if (request.method === "OPTIONS") {
-        return new Response(null, {
-            status: 204,
-            headers: {
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
-                "Access-Control-Max-Age": "86400", // 24小时缓存预检请求结果
-                "Access-Control-Allow-Credentials": "true",
-            },
-        });
-    }
+  // 处理预检请求
+  if (request.method === "OPTIONS") {
+      return new Response(null, {
+          status: 204,
+          headers: {
+              "Access-Control-Allow-Origin": "*",
+              "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+              "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
+              "Access-Control-Max-Age": "86400", // 24小时缓存预检请求结果
+              "Access-Control-Allow-Credentials": "true",
+          },
+      });
+  }
 
-    // 管理员界面路由
-    if (path === "/admin" || path === "/admin/") {
-        return handleAdminInterface(request);
-    }
+  // 管理员界面路由
+  if (path === "/admin" || path === "/admin/") {
+      return handleAdminInterface(request);
+  }
 
-    if (path.startsWith("/admin/api/")) {
-        return handleAdminAPI(request, path.replace("/admin/api/", ""));
-    }
+  if (path.startsWith("/admin/api/")) {
+      return handleAdminAPI(request, path.replace("/admin/api/", ""));
+  }
 
-    // API代理路由 - 转发请求到siliconflow API并进行负载均衡
-    if (path.startsWith("/v1/") || path.startsWith("/v1beta/")) {
-        return handleAPIProxy(request, path);
-    }
+  if (env.CLIENT === "true") {
+      // 获取 API密钥
+      const apiKey = await getConfigValue("api_key", CONFIG.API_KEY);
+      if (path.startsWith(`/${apiKey}/`)) {
+          // 给 request 添加 Authorization 头
+          const newRequest = new Request(request);
+          newRequest.headers.set("Authorization", `Bearer ${apiKey}`);
+          return handleAPIProxy(newRequest, path.replace(`/${apiKey}`, ""));
+      }
+  }
 
-    // 主界面
-    return handleMainInterface(request);
+  // API代理路由 - 转发请求到siliconflow API并进行负载均衡
+  if (path.startsWith("/v1/") || path.startsWith("/v1beta/")) {
+      return handleAPIProxy(request, path);
+  }
+
+  // 主界面
+  return handleMainInterface(request);
 }
 
 // 访客认证中间件
 async function authenticateGuest(request) {
-    const config = await getConfiguration();
+  const config = await getConfiguration();
 
-    // 如果是完全开放的，直接通过认证
-    if (config.accessControl === "open") {
-        return true;
-    }
+  // 如果是完全开放的，直接通过认证
+  if (config.accessControl === "open") {
+      return true;
+  }
 
-    // 如果是完全私有的，仅允许管理员访问，检查管理员认证
-    if (config.accessControl === "private") {
-        return await authenticateAdmin(request);
-    }
+  // 如果是完全私有的，仅允许管理员访问，检查管理员认证
+  if (config.accessControl === "private") {
+      return await authenticateAdmin(request);
+  }
 
-    // 部分开放模式，检查访客密码
-    if (config.accessControl === "restricted") {
-        // 获取Authorization头
-        const authHeader = request.headers.get("Authorization");
-        if (!authHeader || !authHeader.startsWith("Bearer ")) {
-            return false;
-        }
+  // 部分开放模式，检查访客密码
+  if (config.accessControl === "restricted") {
+      // 获取Authorization头
+      const authHeader = request.headers.get("Authorization");
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+          return false;
+      }
 
-        // 检查访客token
-        const guestToken = authHeader.replace("Bearer ", "").trim();
+      // 检查访客token
+      const guestToken = authHeader.replace("Bearer ", "").trim();
 
-        // 验证访客密码
-        return guestToken === config.guestPassword;
-    }
+      // 验证访客密码
+      return guestToken === config.guestPassword;
+  }
 
-    // 默认拒绝访问
-    return false;
+  // 默认拒绝访问
+  return false;
 }
 
 // 管理员认证中间件
 async function authenticateAdmin(request) {
-    try {
-        // 从D1数据库查询管理员凭据
-        const adminUsername = await getConfigValue("admin_username", CONFIG.ADMIN_USERNAME);
-        const adminPassword = await getConfigValue("admin_password", CONFIG.ADMIN_PASSWORD);
+  try {
+      // 从D1数据库查询管理员凭据
+      const adminUsername = await getConfigValue("admin_username", CONFIG.ADMIN_USERNAME);
+      const adminPassword = await getConfigValue("admin_password", CONFIG.ADMIN_PASSWORD);
 
-        // 获取Authorization头
-        const authHeader = request.headers.get("Authorization");
-        if (!authHeader || !authHeader.startsWith("Basic ")) {
-            return false;
-        }
+      // 获取Authorization头
+      const authHeader = request.headers.get("Authorization");
+      if (!authHeader || !authHeader.startsWith("Basic ")) {
+          return false;
+      }
 
-        // 解码并验证凭据
-        const encodedCredentials = authHeader.split(" ")[1];
-        const decodedCredentials = atob(encodedCredentials);
-        const [username, password] = decodedCredentials.split(":");
+      // 解码并验证凭据
+      const encodedCredentials = authHeader.split(" ")[1];
+      const decodedCredentials = atob(encodedCredentials);
+      const [username, password] = decodedCredentials.split(":");
 
-        return username === adminUsername && password === adminPassword;
-    } catch (error) {
-        console.error("认证出错:", error);
-        return false;
-    }
+      return username === adminUsername && password === adminPassword;
+  } catch (error) {
+      console.error("认证出错:", error);
+      return false;
+  }
 }
 
 // 处理管理员界面
 async function handleAdminInterface(request) {
-    const isAuthenticated = await authenticateAdmin(request);
+  const isAuthenticated = await authenticateAdmin(request);
 
-    if (!isAuthenticated) {
-        return new Response("Unauthorized", {
-            status: 401,
-            headers: {
-                "WWW-Authenticate": 'Basic realm="Admin Interface"',
-            },
-        });
-    }
+  if (!isAuthenticated) {
+      return new Response("Unauthorized", {
+          status: 401,
+          headers: {
+              "WWW-Authenticate": 'Basic realm="Admin Interface"',
+          },
+      });
+  }
 
-    return new Response(adminHtmlContent, {
-        headers: { "Content-Type": "text/html;charset=UTF-8" },
-    });
+  return new Response(adminHtmlContent, {
+      headers: { "Content-Type": "text/html;charset=UTF-8" },
+  });
 }
 
 // 为每个密钥单独更新检查时间，避免批量请求出现流锁定问题
 async function updateKeyLastCheckTime(key, lastUpdated) {
-    try {
-        await env.db
-            .prepare(`UPDATE keys SET last_updated = ? WHERE key = ?`)
-            .bind(lastUpdated, key)
-            .run();
+  try {
+      await env.db
+          .prepare(`UPDATE keys SET last_updated = ? WHERE key = ?`)
+          .bind(lastUpdated, key)
+          .run();
 
-        return true;
-    } catch (error) {
-        console.error(`更新密钥 ${key} 时间失败:`, error);
-        return false;
-    }
+      return true;
+  } catch (error) {
+      console.error(`更新密钥 ${key} 时间失败:`, error);
+      return false;
+  }
 }
 
 // 处理管理员API端点
 async function handleAdminAPI(request, endpoint) {
-    // 特殊处理pageSize请求，无需鉴权
-    if (endpoint === "pageSize") {
-        const pageSize = parseInt(await getConfigValue("page_size", CONFIG.PAGE_SIZE));
-        return new Response(JSON.stringify({ success: true, data: pageSize }), {
-            headers: { "Content-Type": "application/json" },
-        });
-    }
+  // 特殊处理pageSize请求，无需鉴权
+  if (endpoint === "pageSize") {
+      const pageSize = parseInt(await getConfigValue("page_size", CONFIG.PAGE_SIZE));
+      return new Response(JSON.stringify({ success: true, data: pageSize }), {
+          headers: { "Content-Type": "application/json" },
+      });
+  }
 
-    // keys端点无需验证，其他端点需要验证
-    if (endpoint === "keys") {
-        // 获取所有密钥，如果不是管理员调用，需要进行访客认证
-        if (!(await authenticateAdmin(request)) && !(await authenticateGuest(request))) {
-            return new Response(
-                JSON.stringify({
-                    success: false,
-                    message: "需要认证",
-                    requireAuth: true,
-                    accessControl: (await getConfiguration()).accessControl,
-                }),
-                {
-                    status: 401,
-                    headers: { "Content-Type": "application/json" },
-                }
-            );
-        }
+  // keys端点无需验证，其他端点需要验证
+  if (endpoint === "keys") {
+      // 获取所有密钥，如果不是管理员调用，需要进行访客认证
+      if (!(await authenticateAdmin(request)) && !(await authenticateGuest(request))) {
+          return new Response(
+              JSON.stringify({
+                  success: false,
+                  message: "需要认证",
+                  requireAuth: true,
+                  accessControl: (await getConfiguration()).accessControl,
+              }),
+              {
+                  status: 401,
+                  headers: { "Content-Type": "application/json" },
+              }
+          );
+      }
 
-        const keys = await getAllKeys();
-        return new Response(JSON.stringify({ success: true, data: keys }), {
-            headers: { "Content-Type": "application/json" },
-        });
-    }
-    // 添加获取访问控制配置的端点
-    else if (endpoint === "access-control") {
-        // 这个端点可以公开访问，用于前端判断认证方式
-        const config = await getConfiguration();
-        return new Response(
-            JSON.stringify({
-                success: true,
-                data: {
-                    accessControl: config.accessControl,
-                },
-            }),
-            {
-                headers: { "Content-Type": "application/json" },
-            }
-        );
-    }
-    // 添加访客验证的端点
-    else if (endpoint === "verify-guest") {
-        const data = await request.json();
-        const config = await getConfiguration();
+      const keys = await getAllKeys();
+      return new Response(JSON.stringify({ success: true, data: keys }), {
+          headers: { "Content-Type": "application/json" },
+      });
+  }
+  // 添加获取访问控制配置的端点
+  else if (endpoint === "access-control") {
+      // 这个端点可以公开访问，用于前端判断认证方式
+      const config = await getConfiguration();
+      return new Response(
+          JSON.stringify({
+              success: true,
+              data: {
+                  accessControl: config.accessControl,
+              },
+          }),
+          {
+              headers: { "Content-Type": "application/json" },
+          }
+      );
+  }
+  // 添加访客验证的端点
+  else if (endpoint === "verify-guest") {
+      const data = await request.json();
+      const config = await getConfiguration();
 
-        if (config.accessControl !== "restricted") {
-            return new Response(
-                JSON.stringify({
-                    success: false,
-                    message: "当前模式不需要访客认证",
-                }),
-                {
-                    headers: { "Content-Type": "application/json" },
-                }
-            );
-        }
+      if (config.accessControl !== "restricted") {
+          return new Response(
+              JSON.stringify({
+                  success: false,
+                  message: "当前模式不需要访客认证",
+              }),
+              {
+                  headers: { "Content-Type": "application/json" },
+              }
+          );
+      }
 
-        // 验证访客密码
-        if (data.password === config.guestPassword) {
-            return new Response(
-                JSON.stringify({
-                    success: true,
-                    token: config.guestPassword,
-                }),
-                {
-                    headers: { "Content-Type": "application/json" },
-                }
-            );
-        } else {
-            return new Response(
-                JSON.stringify({
-                    success: false,
-                    message: "访客密码不正确",
-                }),
-                {
-                    status: 401,
-                    headers: { "Content-Type": "application/json" },
-                }
-            );
-        }
-    }
+      // 验证访客密码
+      if (data.password === config.guestPassword) {
+          return new Response(
+              JSON.stringify({
+                  success: true,
+                  token: config.guestPassword,
+              }),
+              {
+                  headers: { "Content-Type": "application/json" },
+              }
+          );
+      } else {
+          return new Response(
+              JSON.stringify({
+                  success: false,
+                  message: "访客密码不正确",
+              }),
+              {
+                  status: 401,
+                  headers: { "Content-Type": "application/json" },
+              }
+          );
+      }
+  }
 
-    try {
-        if (request.method === "GET") {
-            // GET端点
-            if (endpoint === "keys") {
-                // 获取所有密钥
-                const keys = await getAllKeys();
-                return new Response(JSON.stringify({ success: true, data: keys }), {
-                    headers: { "Content-Type": "application/json" },
-                });
-            } else if (endpoint === "config") {
-                // 获取配置
-                const config = await getConfiguration();
-                return new Response(JSON.stringify({ success: true, data: config }), {
-                    headers: { "Content-Type": "application/json" },
-                });
-            }
-        } else if (request.method === "POST") {
-            if (endpoint === "add-key") {
-                const data = await request.json();
-                // 添加新密钥
-                if (!data.key) {
-                    return new Response(
-                        JSON.stringify({ success: false, message: "Key is required" }),
-                        {
-                            status: 400,
-                            headers: { "Content-Type": "application/json" },
-                        }
-                    );
-                }
-                await addKey(data.key, data.balance || 0);
-                return new Response(JSON.stringify({ success: true }), {
-                    headers: { "Content-Type": "application/json" },
-                });
-            } else if (endpoint === "add-keys-bulk") {
-                const data = await request.json();
-                // 批量添加密钥（每行一个）
-                if (!data.keys) {
-                    return new Response(
-                        JSON.stringify({ success: false, message: "Keys are required" }),
-                        {
-                            status: 400,
-                            headers: { "Content-Type": "application/json" },
-                        }
-                    );
-                }
+  try {
+      if (request.method === "GET") {
+          // GET端点
+          if (endpoint === "keys") {
+              // 获取所有密钥
+              const keys = await getAllKeys();
+              return new Response(JSON.stringify({ success: true, data: keys }), {
+                  headers: { "Content-Type": "application/json" },
+              });
+          } else if (endpoint === "config") {
+              // 获取配置
+              const config = await getConfiguration();
+              return new Response(JSON.stringify({ success: true, data: config }), {
+                  headers: { "Content-Type": "application/json" },
+              });
+          }
+      } else if (request.method === "POST") {
+          if (endpoint === "add-key") {
+              const data = await request.json();
+              // 添加新密钥
+              if (!data.key) {
+                  return new Response(
+                      JSON.stringify({ success: false, message: "Key is required" }),
+                      {
+                          status: 400,
+                          headers: { "Content-Type": "application/json" },
+                      }
+                  );
+              }
+              await addKey(data.key, data.balance || 0);
+              return new Response(JSON.stringify({ success: true }), {
+                  headers: { "Content-Type": "application/json" },
+              });
+          } else if (endpoint === "add-keys-bulk") {
+              const data = await request.json();
+              // 批量添加密钥（每行一个）
+              if (!data.keys) {
+                  return new Response(
+                      JSON.stringify({ success: false, message: "Keys are required" }),
+                      {
+                          status: 400,
+                          headers: { "Content-Type": "application/json" },
+                      }
+                  );
+              }
 
-                const keys = data.keys
-                    .split("\n")
-                    .map(k => k.trim())
-                    .filter(k => k);
+              const keys = data.keys
+                  .split("\n")
+                  .map(k => k.trim())
+                  .filter(k => k);
 
-                // 使用批量添加函数
-                await addKeys(keys, 0);
+              // 使用批量添加函数
+              await addKeys(keys, 0);
 
-                // 直接返回添加的key字符串数组
-                return new Response(
-                    JSON.stringify({
-                        success: true,
-                        count: keys.length,
-                        addedKeys: keys, // 直接返回API Key字符串数组
-                        autoCheck: true, // 标记前端需要自动触发检查
-                    }),
-                    {
-                        headers: { "Content-Type": "application/json" },
-                    }
-                );
-            } else if (endpoint === "delete-key") {
-                const data = await request.json();
-                // 删除密钥
-                if (!data.key) {
-                    return new Response(
-                        JSON.stringify({ success: false, message: "Key is required" }),
-                        {
-                            status: 400,
-                            headers: { "Content-Type": "application/json" },
-                        }
-                    );
-                }
-                await deleteKey(data.key);
-                return new Response(JSON.stringify({ success: true }), {
-                    headers: { "Content-Type": "application/json" },
-                });
-            } else if (endpoint === "update-config") {
-                const data = await request.json();
-                // 更新配置
-                await updateConfiguration(data);
-                return new Response(JSON.stringify({ success: true }), {
-                    headers: { "Content-Type": "application/json" },
-                });
-            } else if (endpoint === "update-balances") {
-                const data = await request.json();
-                try {
-                    // 执行实际更新操作
-                    const result = await updateAllKeyBalances();
+              // 直接返回添加的key字符串数组
+              return new Response(
+                  JSON.stringify({
+                      success: true,
+                      count: keys.length,
+                      addedKeys: keys, // 直接返回API Key字符串数组
+                      autoCheck: true, // 标记前端需要自动触发检查
+                  }),
+                  {
+                      headers: { "Content-Type": "application/json" },
+                  }
+              );
+          } else if (endpoint === "delete-key") {
+              const data = await request.json();
+              // 删除密钥
+              if (!data.key) {
+                  return new Response(
+                      JSON.stringify({ success: false, message: "Key is required" }),
+                      {
+                          status: 400,
+                          headers: { "Content-Type": "application/json" },
+                      }
+                  );
+              }
+              await deleteKey(data.key);
+              return new Response(JSON.stringify({ success: true }), {
+                  headers: { "Content-Type": "application/json" },
+              });
+          } else if (endpoint === "update-config") {
+              const data = await request.json();
+              // 更新配置
+              await updateConfiguration(data);
+              return new Response(JSON.stringify({ success: true }), {
+                  headers: { "Content-Type": "application/json" },
+              });
+          } else if (endpoint === "update-balances") {
+              const data = await request.json();
+              try {
+                  // 执行实际更新操作
+                  const result = await updateAllKeyBalances();
 
-                    return new Response(JSON.stringify(result), {
-                        headers: { "Content-Type": "application/json" },
-                    });
-                } catch (error) {
-                    console.error("更新密钥余额时出错:", error);
-                    return new Response(
-                        JSON.stringify({
-                            success: false,
-                            message: `更新失败: ${error.message || "未知错误"}`,
-                        }),
-                        {
-                            status: 500,
-                            headers: { "Content-Type": "application/json" },
-                        }
-                    );
-                }
-            } else if (endpoint === "update-key-balance") {
-                const data = await request.json();
-                if (!data.key) {
-                    return new Response(
-                        JSON.stringify({ success: false, message: "密钥不能为空" }),
-                        {
-                            status: 400,
-                            headers: { "Content-Type": "application/json" },
-                        }
-                    );
-                }
+                  return new Response(JSON.stringify(result), {
+                      headers: { "Content-Type": "application/json" },
+                  });
+              } catch (error) {
+                  console.error("更新密钥余额时出错:", error);
+                  return new Response(
+                      JSON.stringify({
+                          success: false,
+                          message: `更新失败: ${error.message || "未知错误"}`,
+                      }),
+                      {
+                          status: 500,
+                          headers: { "Content-Type": "application/json" },
+                      }
+                  );
+              }
+          } else if (endpoint === "update-key-balance") {
+              const data = await request.json();
+              if (!data.key) {
+                  return new Response(
+                      JSON.stringify({ success: false, message: "密钥不能为空" }),
+                      {
+                          status: 400,
+                          headers: { "Content-Type": "application/json" },
+                      }
+                  );
+              }
 
-                // 检查密钥是否存在
-                const keyExists = await env.db
-                    .prepare(`SELECT key FROM keys WHERE key = ?`)
-                    .bind(data.key)
-                    .first();
+              // 检查密钥是否存在
+              const keyExists = await env.db
+                  .prepare(`SELECT key FROM keys WHERE key = ?`)
+                  .bind(data.key)
+                  .first();
 
-                if (!keyExists) {
-                    return new Response(JSON.stringify({ success: false, message: "密钥不存在" }), {
-                        status: 404,
-                        headers: { "Content-Type": "application/json" },
-                    });
-                }
+              if (!keyExists) {
+                  return new Response(JSON.stringify({ success: false, message: "密钥不存在" }), {
+                      status: 404,
+                      headers: { "Content-Type": "application/json" },
+                  });
+              }
 
-                // 更新单个密钥的余额
-                try {
-                    // 使用优化后的检测方法
-                    const result = await checkKeyValidity(data.key);
-                    const now = new Date().toISOString();
+              // 更新单个密钥的余额
+              try {
+                  // 使用优化后的检测方法
+                  const result = await checkKeyValidity(data.key);
+                  const now = new Date().toISOString();
 
-                    // 更新密钥状态到D1数据库
-                    await env.db
-                        .prepare(`UPDATE keys SET balance = ?, last_updated = ? WHERE key = ?`)
-                        .bind(result.balance, now, data.key)
-                        .run();
+                  // 更新密钥状态到D1数据库
+                  await env.db
+                      .prepare(`UPDATE keys SET balance = ?, last_updated = ? WHERE key = ?`)
+                      .bind(result.balance, now, data.key)
+                      .run();
 
-                    return new Response(
-                        JSON.stringify({
-                            success: result.isValid,
-                            balance: result.balance,
-                            message: result.message,
-                            key: data.key,
-                            isValid: result.isValid,
-                            lastUpdated: now,
-                        }),
-                        {
-                            headers: { "Content-Type": "application/json" },
-                        }
-                    );
-                } catch (error) {
-                    return new Response(
-                        JSON.stringify({
-                            success: false,
-                            message: "检测余额失败: " + error.message,
-                        }),
-                        {
-                            status: 500,
-                            headers: { "Content-Type": "application/json" },
-                        }
-                    );
-                }
-            } else if (endpoint === "update-keys-balance") {
-                try {
-                    // 首先验证管理员权限
-                    const authHeader = request.headers.get("Authorization");
-                    if (!authHeader || !authHeader.startsWith("Basic ")) {
-                        return new Response(
-                            JSON.stringify({ success: false, message: "认证失败" }),
-                            {
-                                status: 401,
-                                headers: { "Content-Type": "application/json" },
-                            }
-                        );
-                    }
+                  return new Response(
+                      JSON.stringify({
+                          success: result.isValid,
+                          balance: result.balance,
+                          message: result.message,
+                          key: data.key,
+                          isValid: result.isValid,
+                          lastUpdated: now,
+                      }),
+                      {
+                          headers: { "Content-Type": "application/json" },
+                      }
+                  );
+              } catch (error) {
+                  return new Response(
+                      JSON.stringify({
+                          success: false,
+                          message: "检测余额失败: " + error.message,
+                      }),
+                      {
+                          status: 500,
+                          headers: { "Content-Type": "application/json" },
+                      }
+                  );
+              }
+          } else if (endpoint === "update-keys-balance") {
+              try {
+                  // 首先验证管理员权限
+                  const authHeader = request.headers.get("Authorization");
+                  if (!authHeader || !authHeader.startsWith("Basic ")) {
+                      return new Response(
+                          JSON.stringify({ success: false, message: "认证失败" }),
+                          {
+                              status: 401,
+                              headers: { "Content-Type": "application/json" },
+                          }
+                      );
+                  }
 
-                    // 解码并验证凭据
-                    const encodedCredentials = authHeader.split(" ")[1];
-                    const decodedCredentials = atob(encodedCredentials);
-                    const [username, password] = decodedCredentials.split(":");
+                  // 解码并验证凭据
+                  const encodedCredentials = authHeader.split(" ")[1];
+                  const decodedCredentials = atob(encodedCredentials);
+                  const [username, password] = decodedCredentials.split(":");
 
-                    // 从D1数据库查询管理员凭据
-                    const adminUsername = await getConfigValue(
-                        "admin_username",
-                        CONFIG.ADMIN_USERNAME
-                    );
-                    const adminPassword = await getConfigValue(
-                        "admin_password",
-                        CONFIG.ADMIN_PASSWORD
-                    );
+                  // 从D1数据库查询管理员凭据
+                  const adminUsername = await getConfigValue(
+                      "admin_username",
+                      CONFIG.ADMIN_USERNAME
+                  );
+                  const adminPassword = await getConfigValue(
+                      "admin_password",
+                      CONFIG.ADMIN_PASSWORD
+                  );
 
-                    // 验证凭据
-                    if (username !== adminUsername || password !== adminPassword) {
-                        return new Response(
-                            JSON.stringify({ success: false, message: "认证失败" }),
-                            {
-                                status: 401,
-                                headers: { "Content-Type": "application/json" },
-                            }
-                        );
-                    }
+                  // 验证凭据
+                  if (username !== adminUsername || password !== adminPassword) {
+                      return new Response(
+                          JSON.stringify({ success: false, message: "认证失败" }),
+                          {
+                              status: 401,
+                              headers: { "Content-Type": "application/json" },
+                          }
+                      );
+                  }
 
-                    // 只读取一次请求体
-                    const data = await request.json();
+                  // 只读取一次请求体
+                  const data = await request.json();
 
-                    // 验证keys数组
-                    if (
-                        !data ||
-                        !data.keys ||
-                        !Array.isArray(data.keys) ||
-                        data.keys.length === 0
-                    ) {
-                        return new Response(
-                            JSON.stringify({
-                                success: false,
-                                message: "请提供要检测的密钥列表",
-                            }),
-                            {
-                                status: 400,
-                                headers: { "Content-Type": "application/json" },
-                            }
-                        );
-                    }
+                  // 验证keys数组
+                  if (
+                      !data ||
+                      !data.keys ||
+                      !Array.isArray(data.keys) ||
+                      data.keys.length === 0
+                  ) {
+                      return new Response(
+                          JSON.stringify({
+                              success: false,
+                              message: "请提供要检测的密钥列表",
+                          }),
+                          {
+                              status: 400,
+                              headers: { "Content-Type": "application/json" },
+                          }
+                      );
+                  }
 
-                    // 获取要检测的密钥
-                    const keysToCheck = data.keys;
-                    const now = new Date().toISOString();
+                  // 获取要检测的密钥
+                  const keysToCheck = data.keys;
+                  const now = new Date().toISOString();
 
-                    // 优化：不要分别查询每个密钥是否存在，而是一次性查询所有密钥
-                    const existingKeysQuery = await env.db
-                        .prepare(
-                            `SELECT key FROM keys WHERE key IN (${keysToCheck
-                                .map(() => "?")
-                                .join(",")})`
-                        )
-                        .bind(...keysToCheck)
-                        .all();
+                  // 优化：不要分别查询每个密钥是否存在，而是一次性查询所有密钥
+                  const existingKeysQuery = await env.db
+                      .prepare(
+                          `SELECT key FROM keys WHERE key IN (${keysToCheck
+                              .map(() => "?")
+                              .join(",")})`
+                      )
+                      .bind(...keysToCheck)
+                      .all();
 
-                    // 创建一个Set来快速检查密钥是否存在
-                    const existingKeysSet = new Set();
-                    for (const row of existingKeys.results || []) {
-                        existingKeysSet.add(row.key);
-                    }
+                  // 创建一个Set来快速检查密钥是否存在
+                  const existingKeysSet = new Set();
+                  for (const row of existingKeysQuery.results || []) {
+                      existingKeysSet.add(row.key);
+                  }
 
-                    // 创建所有密钥检测的Promise数组 - 后端完全并发处理
-                    const checkPromises = keysToCheck.map(async key => {
-                        try {
-                            // 使用Set快速检查密钥是否存在
-                            if (!existingKeysSet.has(key)) {
-                                return {
-                                    key,
-                                    success: false,
-                                    isValid: false,
-                                    balance: 0,
-                                    lastUpdated: now,
-                                    message: "密钥不存在",
-                                };
-                            }
+                  // 创建所有密钥检测的Promise数组 - 后端完全并发处理
+                  const checkPromises = keysToCheck.map(async key => {
+                      try {
+                          // 使用Set快速检查密钥是否存在
+                          if (!existingKeysSet.has(key)) {
+                              return {
+                                  key,
+                                  success: false,
+                                  isValid: false,
+                                  balance: 0,
+                                  lastUpdated: now,
+                                  message: "密钥不存在",
+                              };
+                          }
 
-                            // 检测密钥余额
-                            const result = await checkKeyValidity(key);
+                          // 检测密钥余额
+                          const result = await checkKeyValidity(key);
 
-                            // 更新D1数据库中的余额和最后更新时间
-                            await env.db
-                                .prepare(
-                                    `UPDATE keys SET balance = ?, last_updated = ? WHERE key = ?`
-                                )
-                                .bind(result.balance, now, key)
-                                .run();
+                          // 更新D1数据库中的余额和最后更新时间
+                          await env.db
+                              .prepare(
+                                  `UPDATE keys SET balance = ?, last_updated = ? WHERE key = ?`
+                              )
+                              .bind(result.balance, now, key)
+                              .run();
 
-                            return {
-                                key,
-                                success: true,
-                                isValid: result.isValid,
-                                balance: result.balance,
-                                lastUpdated: now,
-                                message: result.message,
-                            };
-                        } catch (error) {
-                            console.error(`检测密钥 ${key} 失败:`, error);
-                            return {
-                                key,
-                                success: false,
-                                isValid: false,
-                                balance: 0,
-                                lastUpdated: now,
-                                message: `检测失败: ${error.message || "未知错误"}`,
-                            };
-                        }
-                    });
+                          return {
+                              key,
+                              success: true,
+                              isValid: result.isValid,
+                              balance: result.balance,
+                              lastUpdated: now,
+                              message: result.message,
+                          };
+                      } catch (error) {
+                          console.error(`检测密钥 ${key} 失败:`, error);
+                          return {
+                              key,
+                              success: false,
+                              isValid: false,
+                              balance: 0,
+                              lastUpdated: now,
+                              message: `检测失败: ${error.message || "未知错误"}`,
+                          };
+                      }
+                  });
 
-                    // 并发执行所有检测Promise
-                    const results = await Promise.all(checkPromises);
+                  // 并发执行所有检测Promise
+                  const results = await Promise.all(checkPromises);
 
-                    return new Response(
-                        JSON.stringify({
-                            success: true,
-                            results: results,
-                            count: results.length,
-                            validCount: results.filter(r => r.isValid).length,
-                        }),
-                        {
-                            headers: { "Content-Type": "application/json" },
-                        }
-                    );
-                } catch (error) {
-                    return new Response(
-                        JSON.stringify({
-                            success: false,
-                            message: "处理请求时出错: " + (error.message || "未知错误"),
-                            stack: error.stack,
-                        }),
-                        {
-                            status: 500,
-                            headers: { "Content-Type": "application/json" },
-                        }
-                    );
-                }
-            } else if (endpoint === "batch-update-keys") {
-                try {
-                    // 验证管理员权限或访客权限
-                    if (
-                        !(await authenticateAdmin(request)) &&
-                        !(await authenticateGuest(request))
-                    ) {
-                        return new Response(
-                            JSON.stringify({ success: false, message: "认证失败" }),
-                            {
-                                status: 401,
-                                headers: { "Content-Type": "application/json" },
-                            }
-                        );
-                    }
+                  return new Response(
+                      JSON.stringify({
+                          success: true,
+                          results: results,
+                          count: results.length,
+                          validCount: results.filter(r => r.isValid).length,
+                      }),
+                      {
+                          headers: { "Content-Type": "application/json" },
+                      }
+                  );
+              } catch (error) {
+                  return new Response(
+                      JSON.stringify({
+                          success: false,
+                          message: "处理请求时出错: " + (error.message || "未知错误"),
+                          stack: error.stack,
+                      }),
+                      {
+                          status: 500,
+                          headers: { "Content-Type": "application/json" },
+                      }
+                  );
+              }
+          } else if (endpoint === "batch-update-keys") {
+              try {
+                  // 验证管理员权限或访客权限
+                  if (
+                      !(await authenticateAdmin(request)) &&
+                      !(await authenticateGuest(request))
+                  ) {
+                      return new Response(
+                          JSON.stringify({ success: false, message: "认证失败" }),
+                          {
+                              status: 401,
+                              headers: { "Content-Type": "application/json" },
+                          }
+                      );
+                  }
 
-                    // 解析请求体
-                    const data = await request.json();
+                  // 解析请求体
+                  const data = await request.json();
 
-                    // 验证结果数组
-                    if (
-                        !data ||
-                        !data.results ||
-                        !Array.isArray(data.results) ||
-                        data.results.length === 0
-                    ) {
-                        return new Response(
-                            JSON.stringify({
-                                success: false,
-                                message: "请提供要更新的密钥结果列表",
-                            }),
-                            {
-                                status: 400,
-                                headers: { "Content-Type": "application/json" },
-                            }
-                        );
-                    }
+                  // 验证结果数组
+                  if (
+                      !data ||
+                      !data.results ||
+                      !Array.isArray(data.results) ||
+                      data.results.length === 0
+                  ) {
+                      return new Response(
+                          JSON.stringify({
+                              success: false,
+                              message: "请提供要更新的密钥结果列表",
+                          }),
+                          {
+                              status: 400,
+                              headers: { "Content-Type": "application/json" },
+                          }
+                      );
+                  }
 
-                    const now = new Date().toISOString();
-                    const updatePromises = [];
-                    const results = [];
+                  const now = new Date().toISOString();
+                  const updatePromises = [];
+                  const results = [];
 
-                    // 批量处理所有更新请求
-                    for (const result of data.results) {
-                        try {
-                            // 检查必要字段
-                            if (!result.key) {
-                                results.push({
-                                    success: false,
-                                    message: "密钥不能为空",
-                                });
-                                continue;
-                            }
+                  // 批量处理所有更新请求
+                  for (const result of data.results) {
+                      try {
+                          // 检查必要字段
+                          if (!result.key) {
+                              results.push({
+                                  success: false,
+                                  message: "密钥不能为空",
+                              });
+                              continue;
+                          }
 
-                            // 准备更新语句
-                            const updateStmt = env.db
-                                .prepare(
-                                    `UPDATE keys SET balance = ?, last_updated = ? WHERE key = ?`
-                                )
-                                .bind(result.balance || 0, now, result.key);
+                          // 准备更新语句
+                          const updateStmt = env.db
+                              .prepare(
+                                  `UPDATE keys SET balance = ?, last_updated = ? WHERE key = ?`
+                              )
+                              .bind(result.balance || 0, now, result.key);
 
-                            // 添加到批量操作中
-                            updatePromises.push(
-                                updateStmt
-                                    .run()
-                                    .then(() => {
-                                        results.push({
-                                            key: result.key,
-                                            success: true,
-                                            updated: now,
-                                        });
-                                    })
-                                    .catch(error => {
-                                        console.error(`更新密钥 ${result.key} 失败:`, error);
-                                        results.push({
-                                            key: result.key,
-                                            success: false,
-                                            message: `数据库更新失败: ${
-                                                error.message || "未知错误"
-                                            }`,
-                                        });
-                                    })
-                            );
-                        } catch (error) {
-                            results.push({
-                                key: result.key || "未知密钥",
-                                success: false,
-                                message: `处理更新失败: ${error.message || "未知错误"}`,
-                            });
-                        }
-                    }
+                          // 添加到批量操作中
+                          updatePromises.push(
+                              updateStmt
+                                  .run()
+                                  .then(() => {
+                                      results.push({
+                                          key: result.key,
+                                          success: true,
+                                          updated: now,
+                                      });
+                                  })
+                                  .catch(error => {
+                                      console.error(`更新密钥 ${result.key} 失败:`, error);
+                                      results.push({
+                                          key: result.key,
+                                          success: false,
+                                          message: `数据库更新失败: ${
+                                              error.message || "未知错误"
+                                          }`,
+                                      });
+                                  })
+                          );
+                      } catch (error) {
+                          results.push({
+                              key: result.key || "未知密钥",
+                              success: false,
+                              message: `处理更新失败: ${error.message || "未知错误"}`,
+                          });
+                      }
+                  }
 
-                    // 等待所有更新完成
-                    await Promise.all(updatePromises);
+                  // 等待所有更新完成
+                  await Promise.all(updatePromises);
 
-                    // 统计更新结果
-                    const successCount = results.filter(r => r.success).length;
-                    const failCount = results.length - successCount;
+                  // 统计更新结果
+                  const successCount = results.filter(r => r.success).length;
+                  const failCount = results.length - successCount;
 
-                    return new Response(
-                        JSON.stringify({
-                            success: true,
-                            updated: successCount,
-                            failed: failCount,
-                            total: results.length,
-                            results: results,
-                        }),
-                        {
-                            headers: { "Content-Type": "application/json" },
-                        }
-                    );
-                } catch (error) {
-                    console.error("批量更新密钥时出错:", error);
-                    return new Response(
-                        JSON.stringify({
-                            success: false,
-                            message: "处理请求时出错: " + (error.message || "未知错误"),
-                        }),
-                        {
-                            status: 500,
-                            headers: { "Content-Type": "application/json" },
-                        }
-                    );
-                }
-            }
-        } else if (request.method === "DELETE") {
-            if (endpoint.startsWith("keys/")) {
-                const key = endpoint.replace("keys/", "");
-                await deleteKey(key);
-                return new Response(JSON.stringify({ success: true }), {
-                    headers: { "Content-Type": "application/json" },
-                });
-            }
-        }
-    } catch (error) {
-        return new Response(JSON.stringify({ success: false, message: error.message }), {
-            status: 500,
-            headers: { "Content-Type": "application/json" },
-        });
-    }
+                  return new Response(
+                      JSON.stringify({
+                          success: true,
+                          updated: successCount,
+                          failed: failCount,
+                          total: results.length,
+                          results: results,
+                      }),
+                      {
+                          headers: { "Content-Type": "application/json" },
+                      }
+                  );
+              } catch (error) {
+                  console.error("批量更新密钥时出错:", error);
+                  return new Response(
+                      JSON.stringify({
+                          success: false,
+                          message: "处理请求时出错: " + (error.message || "未知错误"),
+                      }),
+                      {
+                          status: 500,
+                          headers: { "Content-Type": "application/json" },
+                      }
+                  );
+              }
+          }
+      } else if (request.method === "DELETE") {
+          if (endpoint.startsWith("keys/")) {
+              const key = endpoint.replace("keys/", "");
+              await deleteKey(key);
+              return new Response(JSON.stringify({ success: true }), {
+                  headers: { "Content-Type": "application/json" },
+              });
+          }
+      }
+  } catch (error) {
+      return new Response(JSON.stringify({ success: false, message: error.message }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+      });
+  }
 
-    // 如果没有匹配的端点
-    return new Response(JSON.stringify({ success: false, message: "无效的端点" }), {
-        status: 404,
-        headers: { "Content-Type": "application/json" },
-    });
+  // 如果没有匹配的端点
+  return new Response(JSON.stringify({ success: false, message: "无效的端点" }), {
+      status: 404,
+      headers: { "Content-Type": "application/json" },
+  });
 }
 
 // 处理主界面
 async function handleMainInterface(request) {
-    return new Response(mainHtmlContent, {
-        headers: { "Content-Type": "text/html;charset=UTF-8" },
-    });
+  return new Response(mainHtmlContent, {
+      headers: { "Content-Type": "text/html;charset=UTF-8" },
+  });
 }
 
 // 处理API代理，带负载均衡
 async function handleAPIProxy(request, path) {
-    // 验证API请求
-    const authHeader = request.headers.get("Authorization");
-    if (!authHeader) {
-        return new Response(
-            JSON.stringify({
-                error: { message: "需要认证" },
-            }),
-            {
-                status: 401,
-                headers: { "Content-Type": "application/json" },
-            }
-        );
-    }
+  // 验证API请求
+  const authHeader = request.headers.get("Authorization");
+  if (!authHeader) {
+      return new Response(
+          JSON.stringify({
+              error: { message: "需要认证" },
+          }),
+          {
+              status: 401,
+              headers: { "Content-Type": "application/json" },
+          }
+      );
+  }
 
-    // 从Authorization头中提取token
-    const providedToken = authHeader.replace("Bearer ", "").trim();
+  // 从Authorization头中提取token
+  const providedToken = authHeader.replace("Bearer ", "").trim();
 
-    // 从D1获取API密钥
-    const apiKey = await getConfigValue("api_key", CONFIG.API_KEY);
+  // 从D1获取API密钥
+  const apiKey = await getConfigValue("api_key", CONFIG.API_KEY);
 
-    if (providedToken !== apiKey) {
-        return new Response(
-            JSON.stringify({
-                error: { message: "无效的API密钥" },
-            }),
-            {
-                status: 401,
-                headers: { "Content-Type": "application/json" },
-            }
-        );
-    }
+  if (providedToken !== apiKey) {
+      return new Response(
+          JSON.stringify({
+              error: { message: "无效的API密钥" },
+          }),
+          {
+              status: 401,
+              headers: { "Content-Type": "application/json" },
+          }
+      );
+  }
 
-    // 获取所有有效密钥用于负载均衡
-    const allKeys = await getAllKeys();
-    const validKeys = allKeys.filter(k => k.balance > 0);
+  // 获取所有有效密钥用于负载均衡
+  const allKeys = await getAllKeys();
+  const validKeys = allKeys.filter(k => k.balance > 0);
 
-    if (validKeys.length === 0) {
-        return new Response(
-            JSON.stringify({
-                error: { message: "没有可用的API密钥" },
-            }),
-            {
-                status: 503,
-                headers: { "Content-Type": "application/json" },
-            }
-        );
-    }
+  if (validKeys.length === 0) {
+      return new Response(
+          JSON.stringify({
+              error: { message: "没有可用的API密钥" },
+          }),
+          {
+              status: 503,
+              headers: { "Content-Type": "application/json" },
+          }
+      );
+  }
 
-    // 负载均衡 - 随机选择一个密钥
-    const randomIndex = Math.floor(Math.random() * validKeys.length);
-    const selectedKey = validKeys[randomIndex].key;
+  // 负载均衡 - 随机选择一个密钥
+  const randomIndex = Math.floor(Math.random() * validKeys.length);
+  const selectedKey = validKeys[randomIndex].key;
 
-    // 克隆请求并修改头信息
-    const newHeaders = new Headers(request.headers);
-    newHeaders.set("Authorization", `Bearer ${selectedKey}`);
 
-    // 移除host头以避免冲突
-    newHeaders.delete("host");
+  // 从环境变量获取代理配置
+  const proxyEnabled = env.PROXY_ENABLED === "true";
+  const httpProxy = env.HTTP_PROXY || "";
 
-    // 从环境变量获取代理配置
-    const proxyEnabled = env.PROXY_ENABLED === "true";
-    const httpProxy = env.HTTP_PROXY || "";
+  let newRequest;
+  const targetUrl = `${BASE_URL}${path}?key=${selectedKey}`;
+  if (proxyEnabled && httpProxy) {
+      // 构建代理请求
+      newRequest = new Request(httpProxy, {
+          method: "GET",
+          headers: request.headers,
+          body: request.body,
+          redirect: "follow",
+      });
+  } else {
+      // 创建新请求
+      newRequest = new Request(targetUrl, {
+          method: "GET",
+          headers: request.headers,
+          body: request.body,
+          redirect: "follow",
+      });
+  }
 
-    let newRequest;
-    const targetUrl = `${BASE_URL}${path}`;
-    if (proxyEnabled && httpProxy) {
-        // 构建代理请求
-        newRequest = new Request(httpProxy, {
-            method: request.method,
-            headers: newHeaders,
-            body: request.body,
-            redirect: "follow",
-        });
-        // 添加代理头
-        newHeaders.set("X-Forwarded-Host", new URL(BASE_URL).host);
-        newHeaders.set("X-Destination-URL", targetUrl);
-        newHeaders.set("X-Original-URL", targetUrl);
-    } else {
-        // 创建新请求
-        newRequest = new Request(targetUrl, {
-            method: request.method,
-            headers: newHeaders,
-            body: request.body,
-            redirect: "follow",
-        });
-    }
+  // 转发请求
+  const response = await fetch(newRequest);
 
-    // 转发请求
-    const response = await fetch(newRequest);
+  // 创建一个新的响应用于流式传输（如果需要）
+  const newResponse = new Response(response.body, response);
 
-    // 创建一个新的响应用于流式传输（如果需要）
-    const newResponse = new Response(response.body, response);
+  // 添加完整的CORS头
+  newResponse.headers.set("Access-Control-Allow-Origin", "*");
+  newResponse.headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  newResponse.headers.set(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Authorization, X-Requested-With"
+  );
+  newResponse.headers.set("Access-Control-Allow-Credentials", "true");
+  newResponse.headers.set("Access-Control-Max-Age", "86400");
 
-    // 添加完整的CORS头
-    newResponse.headers.set("Access-Control-Allow-Origin", "*");
-    newResponse.headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-    newResponse.headers.set(
-        "Access-Control-Allow-Headers",
-        "Content-Type, Authorization, X-Requested-With"
-    );
-    newResponse.headers.set("Access-Control-Allow-Credentials", "true");
-    newResponse.headers.set("Access-Control-Max-Age", "86400");
+  // 禁用缓存以支持流式传输
+  newResponse.headers.set(
+      "Cache-Control",
+      "no-store, no-cache, must-revalidate, proxy-revalidate"
+  );
+  newResponse.headers.set("Pragma", "no-cache");
+  newResponse.headers.set("Expires", "0");
 
-    // 禁用缓存以支持流式传输
-    newResponse.headers.set(
-        "Cache-Control",
-        "no-store, no-cache, must-revalidate, proxy-revalidate"
-    );
-    newResponse.headers.set("Pragma", "no-cache");
-    newResponse.headers.set("Expires", "0");
-
-    return newResponse;
+  return newResponse;
 }
 
 // D1工具函数 - 获取配置值
 async function getConfigValue(name, defaultValue) {
-    try {
-        const result = await env.db
-            .prepare(`SELECT value FROM config WHERE name = ?`)
-            .bind(name)
-            .first();
+  try {
+      const result = await env.db
+          .prepare(`SELECT value FROM config WHERE name = ?`)
+          .bind(name)
+          .first();
 
-        return result ? result.value : defaultValue;
-    } catch (error) {
-        console.error(`获取配置 ${name} 时出错:`, error);
-        return defaultValue;
-    }
+      return result ? result.value : defaultValue;
+  } catch (error) {
+      console.error(`获取配置 ${name} 时出错:`, error);
+      return defaultValue;
+  }
 }
 
 // 获取所有密钥
 async function getAllKeys() {
-    try {
-        const result = await env.db
-            .prepare(
-                `SELECT key, balance, added, last_updated as lastUpdated FROM keys ORDER BY balance DESC`
-            )
-            .all();
+  try {
+      const result = await env.db
+          .prepare(
+              `SELECT key, balance, added, last_updated as lastUpdated FROM keys ORDER BY balance DESC`
+          )
+          .all();
 
-        return result.results || [];
-    } catch (error) {
-        console.error("获取密钥时出错:", error);
-        return [];
-    }
+      return result.results || [];
+  } catch (error) {
+      console.error("获取密钥时出错:", error);
+      return [];
+  }
 }
 
 // 添加单个密钥
 async function addKey(key, balance = 0) {
-    try {
-        const now = new Date().toISOString();
+  try {
+      const now = new Date().toISOString();
 
-        await env.db
-            .prepare(
-                `INSERT OR REPLACE INTO keys (key, balance, added, last_updated) 
-         VALUES (?, ?, ?, ?)`
-            )
-            .bind(key, balance, now, null)
-            .run();
+      await env.db
+          .prepare(
+              `INSERT OR REPLACE INTO keys (key, balance, added, last_updated) 
+       VALUES (?, ?, ?, ?)`
+          )
+          .bind(key, balance, now, null)
+          .run();
 
-        return true;
-    } catch (error) {
-        console.error(`添加密钥 ${key} 时出错:`, error);
-        return false;
-    }
+      return true;
+  } catch (error) {
+      console.error(`添加密钥 ${key} 时出错:`, error);
+      return false;
+  }
 }
 
 // 批量添加密钥
 async function addKeys(keys, balance = 0) {
-    try {
-        const now = new Date().toISOString();
-        const batch = [];
+  try {
+      const now = new Date().toISOString();
+      const batch = [];
 
-        for (const key of keys) {
-            batch.push(
-                env.db
-                    .prepare(
-                        `INSERT OR REPLACE INTO keys (key, balance, added, last_updated) 
-             VALUES (?, ?, ?, ?)`
-                    )
-                    .bind(key, balance, now, null)
-            );
-        }
+      for (const key of keys) {
+          batch.push(
+              env.db
+                  .prepare(
+                      `INSERT OR REPLACE INTO keys (key, balance, added, last_updated) 
+           VALUES (?, ?, ?, ?)`
+                  )
+                  .bind(key, balance, now, null)
+          );
+      }
 
-        await env.db.batch(batch);
-        return true;
-    } catch (error) {
-        console.error("批量添加密钥时出错:", error);
-        return false;
-    }
+      await env.db.batch(batch);
+      return true;
+  } catch (error) {
+      console.error("批量添加密钥时出错:", error);
+      return false;
+  }
 }
 
 // 删除密钥
 async function deleteKey(key) {
-    try {
-        await env.db.prepare(`DELETE FROM keys WHERE key = ?`).bind(key).run();
+  try {
+      await env.db.prepare(`DELETE FROM keys WHERE key = ?`).bind(key).run();
 
-        return true;
-    } catch (error) {
-        console.error(`删除密钥 ${key} 时出错:`, error);
-        return false;
-    }
+      return true;
+  } catch (error) {
+      console.error(`删除密钥 ${key} 时出错:`, error);
+      return false;
+  }
 }
 
 // 获取配置
 async function getConfiguration() {
-    try {
-        const configs = await env.db.prepare(`SELECT name, value FROM config`).all();
+  try {
+      const configs = await env.db.prepare(`SELECT name, value FROM config`).all();
 
-        // 转换为映射结构
-        const configMap = {};
-        for (const row of configs.results) {
-            configMap[row.name] = row.value;
-        }
+      // 转换为映射结构
+      const configMap = {};
+      for (const row of configs.results) {
+          configMap[row.name] = row.value;
+      }
 
-        return {
-            apiKey: configMap.api_key || CONFIG.API_KEY,
-            adminUsername: configMap.admin_username || CONFIG.ADMIN_USERNAME,
-            adminPassword: configMap.admin_password || CONFIG.ADMIN_PASSWORD,
-            pageSize: parseInt(configMap.page_size || CONFIG.PAGE_SIZE),
-            accessControl: configMap.access_control || CONFIG.ACCESS_CONTROL,
-            guestPassword: configMap.guest_password || CONFIG.GUEST_PASSWORD,
-        };
-    } catch (error) {
-        console.error("获取配置时出错:", error);
-        // 出错时返回默认配置
-        return {
-            apiKey: CONFIG.API_KEY,
-            adminUsername: CONFIG.ADMIN_USERNAME,
-            adminPassword: CONFIG.ADMIN_PASSWORD,
-            pageSize: CONFIG.PAGE_SIZE,
-            accessControl: CONFIG.ACCESS_CONTROL,
-            guestPassword: CONFIG.GUEST_PASSWORD,
-        };
-    }
+      return {
+          apiKey: configMap.api_key || CONFIG.API_KEY,
+          adminUsername: configMap.admin_username || CONFIG.ADMIN_USERNAME,
+          adminPassword: configMap.admin_password || CONFIG.ADMIN_PASSWORD,
+          pageSize: parseInt(configMap.page_size || CONFIG.PAGE_SIZE),
+          accessControl: configMap.access_control || CONFIG.ACCESS_CONTROL,
+          guestPassword: configMap.guest_password || CONFIG.GUEST_PASSWORD,
+      };
+  } catch (error) {
+      console.error("获取配置时出错:", error);
+      // 出错时返回默认配置
+      return {
+          apiKey: CONFIG.API_KEY,
+          adminUsername: CONFIG.ADMIN_USERNAME,
+          adminPassword: CONFIG.ADMIN_PASSWORD,
+          pageSize: CONFIG.PAGE_SIZE,
+          accessControl: CONFIG.ACCESS_CONTROL,
+          guestPassword: CONFIG.GUEST_PASSWORD,
+      };
+  }
 }
 
 // 更新配置
 async function updateConfiguration(config) {
-    const updates = [];
+  const updates = [];
 
-    try {
-        // 准备参数化SQL批量更新
-        if (config.apiKey !== undefined) {
-            updates.push(
-                env.db
-                    .prepare(`INSERT OR REPLACE INTO config (name, value) VALUES ('api_key', ?)`)
-                    .bind(config.apiKey)
-            );
-        }
+  try {
+      // 准备参数化SQL批量更新
+      if (config.apiKey !== undefined) {
+          updates.push(
+              env.db
+                  .prepare(`INSERT OR REPLACE INTO config (name, value) VALUES ('api_key', ?)`)
+                  .bind(config.apiKey)
+          );
+      }
 
-        if (config.adminUsername !== undefined) {
-            updates.push(
-                env.db
-                    .prepare(
-                        `INSERT OR REPLACE INTO config (name, value) VALUES ('admin_username', ?)`
-                    )
-                    .bind(config.adminUsername)
-            );
-        }
+      if (config.adminUsername !== undefined) {
+          updates.push(
+              env.db
+                  .prepare(
+                      `INSERT OR REPLACE INTO config (name, value) VALUES ('admin_username', ?)`
+                  )
+                  .bind(config.adminUsername)
+          );
+      }
 
-        if (config.adminPassword !== undefined) {
-            updates.push(
-                env.db
-                    .prepare(
-                        `INSERT OR REPLACE INTO config (name, value) VALUES ('admin_password', ?)`
-                    )
-                    .bind(config.adminPassword)
-            );
-        }
+      if (config.adminPassword !== undefined) {
+          updates.push(
+              env.db
+                  .prepare(
+                      `INSERT OR REPLACE INTO config (name, value) VALUES ('admin_password', ?)`
+                  )
+                  .bind(config.adminPassword)
+          );
+      }
 
-        if (config.pageSize !== undefined) {
-            updates.push(
-                env.db
-                    .prepare(`INSERT OR REPLACE INTO config (name, value) VALUES ('page_size', ?)`)
-                    .bind(config.pageSize.toString())
-            );
-        }
+      if (config.pageSize !== undefined) {
+          updates.push(
+              env.db
+                  .prepare(`INSERT OR REPLACE INTO config (name, value) VALUES ('page_size', ?)`)
+                  .bind(config.pageSize.toString())
+          );
+      }
 
-        if (config.accessControl !== undefined) {
-            updates.push(
-                env.db
-                    .prepare(
-                        `INSERT OR REPLACE INTO config (name, value) VALUES ('access_control', ?)`
-                    )
-                    .bind(config.accessControl)
-            );
-        }
+      if (config.accessControl !== undefined) {
+          updates.push(
+              env.db
+                  .prepare(
+                      `INSERT OR REPLACE INTO config (name, value) VALUES ('access_control', ?)`
+                  )
+                  .bind(config.accessControl)
+          );
+      }
 
-        if (config.guestPassword !== undefined) {
-            updates.push(
-                env.db
-                    .prepare(
-                        `INSERT OR REPLACE INTO config (name, value) VALUES ('guest_password', ?)`
-                    )
-                    .bind(config.guestPassword)
-            );
-        }
+      if (config.guestPassword !== undefined) {
+          updates.push(
+              env.db
+                  .prepare(
+                      `INSERT OR REPLACE INTO config (name, value) VALUES ('guest_password', ?)`
+                  )
+                  .bind(config.guestPassword)
+          );
+      }
 
-        // 执行所有更新
-        if (updates.length > 0) {
-            await env.db.batch(updates);
-        }
+      // 执行所有更新
+      if (updates.length > 0) {
+          await env.db.batch(updates);
+      }
 
-        return true;
-    } catch (error) {
-        console.error("更新配置时出错:", error);
-        return false;
-    }
+      return true;
+  } catch (error) {
+      console.error("更新配置时出错:", error);
+      return false;
+  }
 }
 
 /**
- * 优化后的密钥验证和余额检测函数
- * 首先验证密钥是否有效，然后查询余额
- */
+* 优化后的密钥验证和余额检测函数
+* 首先验证密钥是否有效，然后查询余额
+*/
 async function checkKeyValidity(key) {
-    try {
-        // 2. 查询支持模型列表
-        const balanceResponse = await fetch(`${BASE_URL}/v1/models?key=${key}`, {
-            method: "GET"
-        });
+  try {
+      // 2. 查询支持模型列表
+      const balanceResponse = await fetch(`${BASE_URL}/v1/models?key=${key}`, {
+          method: "GET"
+      });
 
-        if (!balanceResponse.ok) {
-            const errorData = await balanceResponse.json().catch(() => null);
-            const errorMessage =
-                errorData && errorData.error && errorData.error.message
-                    ? errorData.error.message
-                    : "余额模型列表失败";
+      if (!balanceResponse.ok) {
+          const errorData = await balanceResponse.json().catch(() => null);
+          const errorMessage =
+              errorData && errorData.error && errorData.error.message
+                  ? errorData.error.message
+                  : "余额模型列表失败";
 
-            return {
-                isValid: false,
-                balance: -1,
-                message: errorMessage,
-            };
-        }
+          return {
+              isValid: false,
+              balance: -1,
+              message: errorMessage,
+          };
+      }
 
-        const data = await balanceResponse.json();
-        const balance = data.models.length || 0;
+      const data = await balanceResponse.json();
+      const balance = data.models.length || 0;
 
-        return {
-            isValid: true,
-            balance: balance,
-            message: "验证成功",
-        };
-    } catch (error) {
-        console.error("检测密钥时出错:", error);
-        return {
-            isValid: false,
-            balance: -1,
-            message: `网络错误: ${error.message || "未知错误"}`,
-        };
-    }
+      return {
+          isValid: true,
+          balance: balance,
+          message: "验证成功",
+      };
+  } catch (error) {
+      console.error("检测密钥时出错:", error);
+      return {
+          isValid: false,
+          balance: -1,
+          message: `网络错误: ${error.message || "未知错误"}`,
+      };
+  }
 }
 
 // 更新所有密钥余额
 async function updateAllKeyBalances() {
-    try {
-        // 获取所有密钥
-        const keys = await getAllKeys();
+  try {
+      // 获取所有密钥
+      const keys = await getAllKeys();
 
-        if (keys.length === 0) {
-            return {
-                success: true,
-                updated: 0,
-                failed: 0,
-                results: [],
-            };
-        }
+      if (keys.length === 0) {
+          return {
+              success: true,
+              updated: 0,
+              failed: 0,
+              results: [],
+          };
+      }
 
-        // 使用分批处理以避免大量并发API请求
-        const batchSize = 10; // 每批处理10个密钥
-        let updatedCount = 0;
-        let failedCount = 0;
-        const results = [];
-        const now = new Date().toISOString();
+      // 使用分批处理以避免大量并发API请求
+      const batchSize = 10; // 每批处理10个密钥
+      let updatedCount = 0;
+      let failedCount = 0;
+      const results = [];
+      const now = new Date().toISOString();
 
-        // 分批处理
-        for (let i = 0; i < keys.length; i += batchSize) {
-            const batch = keys.slice(i, i + batchSize);
+      // 分批处理
+      for (let i = 0; i < keys.length; i += batchSize) {
+          const batch = keys.slice(i, i + batchSize);
 
-            // 批量检测当前批次的密钥
-            const batchPromises = batch.map(async keyObj => {
-                try {
-                    const result = await checkKeyValidity(keyObj.key);
+          // 批量检测当前批次的密钥
+          const batchPromises = batch.map(async keyObj => {
+              try {
+                  const result = await checkKeyValidity(keyObj.key);
 
-                    // 更新数据库中的余额和最后检查时间
-                    await env.db
-                        .prepare(`UPDATE keys SET balance = ?, last_updated = ? WHERE key = ?`)
-                        .bind(result.balance, now, keyObj.key)
-                        .run();
+                  // 更新数据库中的余额和最后检查时间
+                  await env.db
+                      .prepare(`UPDATE keys SET balance = ?, last_updated = ? WHERE key = ?`)
+                      .bind(result.balance, now, keyObj.key)
+                      .run();
 
-                    const keyResult = {
-                        key: keyObj.key,
-                        success: result.isValid,
-                        balance: result.balance,
-                        message: result.message,
-                    };
+                  const keyResult = {
+                      key: keyObj.key,
+                      success: result.isValid,
+                      balance: result.balance,
+                      message: result.message,
+                  };
 
-                    if (result.isValid) {
-                        updatedCount++;
-                    } else {
-                        failedCount++;
-                    }
+                  if (result.isValid) {
+                      updatedCount++;
+                  } else {
+                      failedCount++;
+                  }
 
-                    return keyResult;
-                } catch (error) {
-                    console.error(`处理密钥 ${keyObj.key} 时出错:`, error);
+                  return keyResult;
+              } catch (error) {
+                  console.error(`处理密钥 ${keyObj.key} 时出错:`, error);
 
-                    failedCount++;
-                    return {
-                        key: keyObj.key,
-                        success: false,
-                        message: `处理出错: ${error.message}`,
-                    };
-                }
-            });
+                  failedCount++;
+                  return {
+                      key: keyObj.key,
+                      success: false,
+                      message: `处理出错: ${error.message}`,
+                  };
+              }
+          });
 
-            // 等待当前批次所有密钥处理完成
-            const batchResults = await Promise.all(batchPromises);
-            results.push(...batchResults);
+          // 等待当前批次所有密钥处理完成
+          const batchResults = await Promise.all(batchPromises);
+          results.push(...batchResults);
 
-            // 在批次之间添加短暂延迟，避免API速率限制
-            if (i + batchSize < keys.length) {
-                await new Promise(resolve => setTimeout(resolve, 1000));
-            }
-        }
+          // 在批次之间添加短暂延迟，避免API速率限制
+          if (i + batchSize < keys.length) {
+              await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+      }
 
-        return {
-            success: true,
-            updated: updatedCount,
-            failed: failedCount,
-            results: results,
-        };
-    } catch (error) {
-        console.error("更新密钥余额时出错:", error);
-        return {
-            success: false,
-            message: `更新失败: ${error.message}`,
-        };
-    }
+      return {
+          success: true,
+          updated: updatedCount,
+          failed: failedCount,
+          results: results,
+      };
+  } catch (error) {
+      console.error("更新密钥余额时出错:", error);
+      return {
+          success: false,
+          message: `更新失败: ${error.message}`,
+      };
+  }
 }
 
 
