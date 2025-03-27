@@ -488,7 +488,7 @@ async function handleAdminAPI(request, endpoint) {
 
                     // 创建一个Set来快速检查密钥是否存在
                     const existingKeysSet = new Set();
-                    for (const row of existingKeysQuery.results || []) {
+                    for (const row of existingKeys.results || []) {
                         existingKeysSet.add(row.key);
                     }
 
@@ -1039,11 +1039,8 @@ async function updateConfiguration(config) {
 async function checkKeyValidity(key) {
     try {
         // 2. 查询支持模型列表
-        const balanceResponse = await fetch(`${BASE_URL}/v1/models`, {
-            method: "GET",
-            query: {
-                key: key,
-            },
+        const balanceResponse = await fetch(`${BASE_URL}/v1/models?key=${key}`, {
+            method: "GET"
         });
 
         if (!balanceResponse.ok) {
